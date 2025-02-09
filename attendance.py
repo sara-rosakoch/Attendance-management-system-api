@@ -1,68 +1,65 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy  # type: ignore
+from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 
 app = Flask(__name__)
 
-# Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://ladyb:newpassword@localhost:5432/mynewdatabase"
+# Configure PostgreSQL database
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:mypassword@localhost/attendance_db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# Define User Model
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(150), unique=True, nullable=False)
-    email = db.Column(db.String(150), unique=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
-
-# Define Attendance Model
+# Attendance Model
 class Attendance(db.Model):
-    attendance_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    user_id = db.Column(db.String(50), db.ForeignKey('user.id'), nullable=False)
-    timestamp = db.Column(db.DateTime, nullable=False)
+    __tablename__ = 'attendance'
+    
+    attendance_id = db.Column(db.Integer, primary_key=True)  # Auto-incremented ID
+    user_id = db.Column(db.String(50), db.ForeignKey('users.id'), nullable=False)  # String type user ID
+    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-    def __repr__(self):
-        return f"<Attendance {self.user_id} - {self.timestamp}>"
+    def to_dict(self):
+        return {
+            "attendance_id": self.attendance_id,
+            "user_id": self.user_id,
+            "timestamp": self.timestamp
+        }
 
-# Create tables if they don't exist
+# Create the database tables
 with app.app_context():
-    try:
-        db.create_all()
-    except Exception as e:
-        print(f"Error creating tables: {e}")
+    db.create_all()
 
-# Mark Attendance Route
+# API Route: Mark Attendance
 @app.route('/mark-attendance', methods=['POST'])
 def mark_attendance():
-    data = request.get_json()
-    device_id = data.get('id')
-    timestamp = data.get('ts')
-    payload = data.get('pd', {})
-    user_ids = payload.get('user_ids', [])
-    timestamps = payload.get('timestamps', [])
+    try:
+        data = request.get_json()
+        user_id = data.get("user_id")
+        timestamp = data.get("timestamp", datetime.utcnow())
 
-    if not device_id or not timestamp or not user_ids or not timestamps:
-        return jsonify({"message": "Invalid request payload"}), 400
+        # Convert timestamp to datetime if provided as a string
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
 
-    if len(user_ids) != len(timestamps):
-        return jsonify({"message": "Mismatched user_ids and timestamps"}), 400
+        if not user_id:
+            return jsonify({"error": "User ID is required"}), 400
 
-    # Save attendance records to the database
-    for user_id, ts in zip(user_ids, timestamps):
-        attendance = Attendance(user_id=user_id, timestamp=datetime.fromisoformat(ts[:-1]))
+        attendance = Attendance(user_id=user_id, timestamp=timestamp)
         db.session.add(attendance)
-    db.session.commit()
+        db.session.commit()
 
-    response = {
-        "id": device_id,
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "res": {"status": "success"},
-        "sig": "signature456"
-    }
-    return jsonify(response), 200
+        return jsonify({"message": "Attendance marked successfully", "attendance": attendance.to_dict()}), 201
 
-# Run the Flask App
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# API Route: Get All Attendance Records
+@app.route('/attendance', methods=['GET'])
+def get_attendance():
+    attendance_records = Attendance.query.all()
+    return jsonify([record.to_dict() for record in attendance_records])
+
+# Run the Flask app
 if __name__ == '__main__':
     app.run(debug=True)
