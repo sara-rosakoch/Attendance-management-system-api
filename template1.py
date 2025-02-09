@@ -10,48 +10,75 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# User Model
+# Define User Model
 class User(db.Model):
-    id = db.Column(db.String(50), primary_key=True)  # Updated to match VARCHAR(50)
+    id = db.Column(db.String(50), primary_key=True)  # Assuming user_id is VARCHAR
     username = db.Column(db.String(150), unique=True, nullable=False)
     email = db.Column(db.String(150), unique=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Template Model
+# Define Template Model
 class Template(db.Model):
-    template_id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.String(50), db.ForeignKey('user.id'), nullable=False)  # Updated to match VARCHAR(50)
-    template_data = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    template_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.String(50), db.ForeignKey('user.id'), nullable=False)
+    template_data = db.Column(db.Text, nullable=False)  # Storing Base64 fingerprint data
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Fetch Fingerprint Templates for Multiple Users
-@app.route('/template', methods=['GET'])
+# Create tables if they don't exist
+with app.app_context():
+    try:
+        db.create_all()
+    except Exception as e:
+        print(f"Error creating tables: {e}")
+
+# Home Route
+@app.route('/')
+def home():
+    return "Welcome to the Fingerprint API!"
+
+@app.route('/get-template', methods=['GET'])
 def get_templates():
-    user_ids = request.args.getlist('user_id')  # Extract user_id list from query params
+    try:
+        user_ids_str = request.args.get('user_ids')
 
-    if not user_ids:
-        return jsonify({"message": "No user IDs provided"}), 400
+        if not user_ids_str:
+            return jsonify({"message": "Missing 'user_ids' parameter"}), 400
 
-    # Clean and remove spaces from user IDs
-    user_ids = [user_id.strip() for user_id in user_ids if user_id.strip()]
+        user_ids = user_ids_str.split(',')
+        
+        # Debugging: Print the extracted user_ids
+        print(f"User IDs Received: {user_ids}")
 
-    # Query templates for the given user IDs
-    templates = Template.query.filter(Template.user_id.in_(user_ids)).all()
+        templates = Template.query.filter(Template.user_id.in_(user_ids)).all()
 
-    if not templates:
-        return jsonify({"message": "No templates found"}), 404
+        # Debugging: Print fetched templates
+        print(f"Fetched Templates: {templates}")
 
-    # Format response
-    response = [
-        {"user_id": template.user_id, "template_data": template.template_data}
-        for template in templates
-    ]
+        if not templates:
+            return jsonify({"message": "No templates found"}), 404
 
-    return jsonify({
-        "templates": response,
-        "timestamp": datetime.utcnow().isoformat()
-    })
+        response_data = {
+            "id": request.args.get("id", "unknown"),
+            "ts": datetime.utcnow().isoformat(),
+            "kid": "key123",
+            "res": {
+                "templates": [
+                    {
+                        "user_id": template.user_id,
+                        "template_data": template.template_data
+                    }
+                    for template in templates
+                ]
+            },
+            "sig": "signature456"
+        }
 
-# Run Flask app
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# Run the Flask App
 if __name__ == '__main__':
     app.run(debug=True)
