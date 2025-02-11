@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime
 
 app = Flask(__name__)
@@ -10,15 +10,14 @@ app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://ladyb:newpassword@localhos
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
-migrate = Migrate(app, db)  # Initialize Flask-Migrate
 
 # Define User Model
 class User(db.Model):
-    __tablename__ = 'users'  # Rename table to 'users' instead of 'user' to avoid SQL conflicts
-    
-    user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)  # System-generated unique ID
+    __tablename__ = 'users'  # Rename table to avoid conflict with reserved keyword
+    id = db.Column("user_id", db.Integer, primary_key=True, autoincrement=True)
+  # Renamed from user_id to id
     name = db.Column(db.String(150), nullable=False)  # User ID provided during creation
-    tags = db.Column(db.JSON, default=list)  # List of tags associated with the user
+    tags = db.Column(JSONB, default=list)  # List of tags associated with the user
     created_at = db.Column(db.TIMESTAMP, default=db.func.current_timestamp())  # Timestamp when the user was created
 
     def __repr__(self):
@@ -39,15 +38,14 @@ def home():
 # Route to Get User IDs Filtered by Tags
 @app.route('/get-users', methods=['GET'])
 def get_users_by_tags():
-    tags = request.args.getlist('tags')  # Get tags from query parameters
-    
+    tags = request.args.get('tags')
     if not tags:
-        return jsonify({"message": "Tags are required"}), 400
+        return jsonify({"message": "Tags parameter is required"}), 400
     
-    # Ensure tags is stored as an array in JSONB
-    users = User.query.filter(User.tags.contains(tags)).all()  # Using PostgreSQL JSONB containment
-    user_ids = [user.user_id for user in users]
-    
+    tags_list = tags.split(',')  # Convert comma-separated string to list
+    users = User.query.filter(User.tags.op('@>')(db.func.to_jsonb(tags_list))).all()
+    user_ids = [user.id for user in users]  # Ensure this is using 'id'
+
     response = {
         "id": "device123",
         "ts": datetime.utcnow().isoformat() + "Z",
